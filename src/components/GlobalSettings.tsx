@@ -43,13 +43,13 @@ export const GlobalSettings: React.FC = () => {
             className="input w-full"
             placeholder="24"
           />
-          <p className="text-xs text-gray-400">All videos will be converted to this frame rate</p>
+          <p className="text-xs text-gray-400">Output frame rate for exported videos</p>
         </div>
         
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
             <Clock className="w-4 h-4" />
-            Total Frames
+            Target Frames (Default)
           </label>
           <input
             type="number"
@@ -60,7 +60,7 @@ export const GlobalSettings: React.FC = () => {
             className="input w-full"
             placeholder="120"
           />
-          <p className="text-xs text-gray-400">Number of frames in each output video</p>
+          <p className="text-xs text-gray-400">Default frame count (each video can have custom duration)</p>
         </div>
         
         <div className="space-y-2">

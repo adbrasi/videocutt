@@ -9,6 +9,7 @@ export interface VideoFile {
     height: number;
   };
   startTime: number;
+  endTime: number; // End time for the cut
   tagId?: string;
   thumbnailUrl?: string;
   previewUrl?: string;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, FolderOpen, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Loader } from 'lucide-react';
 import { useAppStore } from '@/store';
 
 export const ExportPanel: React.FC = () => {
@@ -7,18 +7,6 @@ export const ExportPanel: React.FC = () => {
   const [outputPath, setOutputPath] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   
-  const handleSelectOutputPath = async () => {
-    try {
-      // In a real electron app, you would use dialog.showOpenDialog
-      // For web version, we'll use a simple input
-      const path = prompt('Enter output directory path:');
-      if (path) {
-        setOutputPath(path);
-      }
-    } catch (error) {
-      console.error('Error selecting output path:', error);
-    }
-  };
 
   const handleExport = async () => {
     if (!outputPath.trim()) {
@@ -41,15 +29,20 @@ export const ExportPanel: React.FC = () => {
     setIsExporting(true);
     
     try {
-      // Prepare export data
+      // Prepare export data with smart clipping
       const exportData = {
-        videos: videos.map(video => ({
-          id: video.id,
-          name: video.name,
-          path: video.serverPath, // Use server path instead of file name
-          startTime: video.startTime,
-          tagName: video.tagId ? tags.find(tag => tag.id === video.tagId)?.name : undefined,
-        })),
+        videos: videos.map(video => {
+          const clipDuration = video.endTime - video.startTime;
+          return {
+            id: video.id,
+            name: video.name,
+            path: video.serverPath,
+            startTime: video.startTime,
+            endTime: video.endTime,
+            clipDuration: clipDuration,
+            tagName: video.tagId ? tags.find(tag => tag.id === video.tagId)?.name : undefined,
+          };
+        }),
         globalSettings,
         outputPath: outputPath.trim(),
       };
@@ -130,23 +123,13 @@ export const ExportPanel: React.FC = () => {
           <label className="block text-sm font-medium text-gray-300">
             Output Directory
           </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={outputPath}
-              onChange={(e) => setOutputPath(e.target.value)}
-              placeholder="Enter output directory (e.g., C:\Users\YourName\Videos or /home/user/videos)..."
-              className="input flex-1"
-            />
-            <button
-              onClick={handleSelectOutputPath}
-              className="btn-secondary flex items-center gap-2"
-              disabled={isExporting}
-            >
-              <FolderOpen className="w-4 h-4" />
-              Browse
-            </button>
-          </div>
+          <input
+            type="text"
+            value={outputPath}
+            onChange={(e) => setOutputPath(e.target.value)}
+            placeholder="Enter output directory (e.g., C:\Users\YourName\Videos or /home/user/videos)..."
+            className="input w-full"
+          />
           <p className="text-xs text-gray-400">
             Videos will be organized into subfolders based on their tags. Windows paths (C:\...) are automatically converted for WSL compatibility.
           </p>

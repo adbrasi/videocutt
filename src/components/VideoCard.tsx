@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Play, Pause, Tag as TagIcon, Upload, CheckCircle, AlertCircle } from 'lucide-react';
+import { Trash2, Tag as TagIcon, Upload, CheckCircle, AlertCircle } from 'lucide-react';
 import * as Slider from '@radix-ui/react-slider';
 import { VideoFile } from '@/types';
 import { useAppStore } from '@/store';
@@ -10,12 +10,12 @@ interface VideoCardProps {
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
-  const { removeVideo, updateVideo, tags, globalSettings } = useAppStore();
+  const { removeVideo, updateVideo, tags } = useAppStore();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isHovered, setIsHovered] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string>('');
+  const [currentPreviewTime, setCurrentPreviewTime] = useState(video.startTime);
 
+  // Create and manage video URL
   useEffect(() => {
     if (video.file) {
       const url = URL.createObjectURL(video.file);
@@ -27,34 +27,72 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
     }
   }, [video.file]);
 
+  // Auto-start infinite live preview
+  useEffect(() => {
+    const videoElement = videoRef.current;
+    if (!videoElement || !videoUrl) return;
+
+    const startPreview = () => {
+      videoElement.currentTime = video.startTime;
+      videoElement.play().catch(() => {
+        // Autoplay failed, retry in a moment
+        setTimeout(startPreview, 1000);
+      });
+    };
+
+    // Start playing when video loads
+    videoElement.addEventListener('loadeddata', startPreview);
+    
+    // Loop between start and end time
+    const handleTimeUpdate = () => {
+      if (videoElement.currentTime >= video.endTime) {
+        videoElement.currentTime = video.startTime;
+      }
+      setCurrentPreviewTime(videoElement.currentTime);
+    };
+
+    videoElement.addEventListener('timeupdate', handleTimeUpdate);
+
+    return () => {
+      videoElement.removeEventListener('loadeddata', startPreview);
+      videoElement.removeEventListener('timeupdate', handleTimeUpdate);
+    };
+  }, [videoUrl, video.startTime, video.endTime]);
+
+  // Update preview when start/end times change
   useEffect(() => {
     const videoElement = videoRef.current;
     if (!videoElement) return;
 
-    if (isHovered && !isPlaying) {
+    // If current time is outside the new range, reset to start
+    if (videoElement.currentTime < video.startTime || videoElement.currentTime >= video.endTime) {
       videoElement.currentTime = video.startTime;
-      videoElement.play().then(() => {
-        setIsPlaying(true);
-      }).catch(() => {
-        // Autoplay failed
-      });
-    } else if (!isHovered && isPlaying) {
-      videoElement.pause();
-      setIsPlaying(false);
     }
-  }, [isHovered, video.startTime]);
+  }, [video.startTime, video.endTime]);
 
   const handleStartTimeChange = (values: number[]) => {
     const newStartTime = values[0];
-    const maxStartTime = Math.max(0, video.duration - (globalSettings.totalFrames / globalSettings.fps));
     
-    if (newStartTime <= maxStartTime) {
-      updateVideo(video.id, { startTime: newStartTime });
-      
-      if (videoRef.current) {
-        videoRef.current.currentTime = newStartTime;
-      }
+    // Ensure start time doesn't exceed end time
+    const maxStartTime = video.endTime - 0.5; // Minimum 0.5 second clip
+    const clampedStartTime = Math.min(newStartTime, maxStartTime);
+    
+    updateVideo(video.id, { startTime: clampedStartTime });
+    
+    // Update video position immediately
+    if (videoRef.current) {
+      videoRef.current.currentTime = clampedStartTime;
     }
+  };
+
+  const handleEndTimeChange = (values: number[]) => {
+    const newEndTime = values[0];
+    
+    // Ensure end time doesn't go below start time
+    const minEndTime = video.startTime + 0.5; // Minimum 0.5 second clip
+    const clampedEndTime = Math.max(newEndTime, minEndTime);
+    
+    updateVideo(video.id, { endTime: clampedEndTime });
   };
 
   const handleTagChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -62,16 +100,11 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
     updateVideo(video.id, { tagId });
   };
 
-  const maxStartTime = Math.max(0, video.duration - (globalSettings.totalFrames / globalSettings.fps));
-  const endTime = video.startTime + (globalSettings.totalFrames / globalSettings.fps);
   const selectedTag = tags.find(tag => tag.id === video.tagId);
+  const clipDuration = video.endTime - video.startTime;
 
   return (
-    <div
-      className="card p-4 animate-fade-in"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
+    <div className="card p-4 animate-fade-in">
       {/* Video Preview */}
       <div className="relative aspect-video bg-gray-800 rounded-lg overflow-hidden mb-4">
         <video
@@ -79,21 +112,12 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
           src={videoUrl}
           className="w-full h-full object-cover"
           muted
-          loop
+          loop={false} // We handle looping manually
           preload="metadata"
           onError={(e) => {
             console.warn('Video loading error:', e);
           }}
         />
-        
-        {/* Overlay with play/pause indicator */}
-        <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-          {isPlaying ? (
-            <Pause className="w-12 h-12 text-white/80" />
-          ) : (
-            <Play className="w-12 h-12 text-white/80" />
-          )}
-        </div>
         
         {/* Upload status indicator */}
         <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-black/50">
@@ -132,6 +156,11 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
             {selectedTag.name}
           </div>
         )}
+
+        {/* Live preview time indicator */}
+        <div className="absolute bottom-2 right-2 px-2 py-1 rounded text-xs font-medium bg-black/70 text-white">
+          {formatTime(currentPreviewTime)}
+        </div>
       </div>
 
       {/* Video Info */}
@@ -147,34 +176,70 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
           </div>
         </div>
 
-        {/* Start Time Slider */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-300">Start Time</span>
-            <span className="text-gray-400">
-              {formatTime(video.startTime)} → {formatTime(endTime)}
-            </span>
+        {/* Time Range Controls */}
+        <div className="space-y-3">
+          {/* Start Time Slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Start Time</span>
+              <span className="text-gray-400">{formatTime(video.startTime)}</span>
+            </div>
+            
+            <Slider.Root
+              className="relative flex items-center select-none touch-none w-full h-5"
+              value={[video.startTime]}
+              max={video.duration - 0.5}
+              min={0}
+              step={0.1}
+              onValueChange={handleStartTimeChange}
+            >
+              <Slider.Track className="bg-gray-700 relative grow rounded-full h-2">
+                <Slider.Range className="absolute bg-green-500 rounded-full h-full" />
+              </Slider.Track>
+              <Slider.Thumb
+                className="block w-4 h-4 bg-green-500 rounded-full shadow-lg hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label="Start time"
+              />
+            </Slider.Root>
           </div>
-          
-          <Slider.Root
-            className="relative flex items-center select-none touch-none w-full h-5"
-            value={[video.startTime]}
-            max={maxStartTime}
-            step={0.1}
-            onValueChange={handleStartTimeChange}
-          >
-            <Slider.Track className="bg-gray-700 relative grow rounded-full h-2">
-              <Slider.Range className="absolute bg-primary-500 rounded-full h-full" />
-            </Slider.Track>
-            <Slider.Thumb
-              className="block w-4 h-4 bg-primary-500 rounded-full shadow-lg hover:bg-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-gray-900"
-              aria-label="Start time"
-            />
-          </Slider.Root>
-          
-          <div className="text-xs text-gray-400">
-            Output: {(globalSettings.totalFrames / globalSettings.fps).toFixed(1)}s 
-            ({globalSettings.totalFrames} frames at {globalSettings.fps} FPS)
+
+          {/* End Time Slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">End Time</span>
+              <span className="text-gray-400">{formatTime(video.endTime)}</span>
+            </div>
+            
+            <Slider.Root
+              className="relative flex items-center select-none touch-none w-full h-5"
+              value={[video.endTime]}
+              max={video.duration}
+              min={video.startTime + 0.5}
+              step={0.1}
+              onValueChange={handleEndTimeChange}
+            >
+              <Slider.Track className="bg-gray-700 relative grow rounded-full h-2">
+                <Slider.Range className="absolute bg-red-500 rounded-full h-full" />
+              </Slider.Track>
+              <Slider.Thumb
+                className="block w-4 h-4 bg-red-500 rounded-full shadow-lg hover:bg-red-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                aria-label="End time"
+              />
+            </Slider.Root>
+          </div>
+
+          {/* Clip Duration Display */}
+          <div className="text-sm bg-gray-700/50 rounded p-2">
+            <div className="flex justify-between">
+              <span className="text-gray-300">Clip Duration:</span>
+              <span className="text-white font-medium">{formatTime(clipDuration)}</span>
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className="text-gray-300">Range:</span>
+              <span className="text-gray-400">
+                {formatTime(video.startTime)} → {formatTime(video.endTime)}
+              </span>
+            </div>
           </div>
         </div>
 

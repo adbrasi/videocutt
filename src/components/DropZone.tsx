@@ -26,6 +26,7 @@ export const DropZone: React.FC = () => {
           fps: metadata.fps,
           resolution: metadata.resolution,
           startTime: 0,
+          endTime: metadata.duration, // Default to full video duration
           thumbnailUrl,
           uploadStatus: 'pending',
         };

@@ -223,7 +223,10 @@ app.post('/api/export', async (req, res) => {
         }
         
         const inputPath = video.path;
-        const duration = globalSettings.totalFrames / globalSettings.fps;
+        // Use individual video clip duration instead of global settings
+        const duration = video.clipDuration || (video.endTime - video.startTime) || (globalSettings.totalFrames / globalSettings.fps);
+        
+        console.log(`Clip range: ${video.startTime}s -> ${video.endTime}s (duration: ${duration}s)`);
         
         // Validate input file exists
         try {
