@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Tag as TagIcon, Upload, CheckCircle, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Trash2, Tag as TagIcon, Upload, CheckCircle, AlertCircle, Play, Pause } from 'lucide-react';
 import * as Slider from '@radix-ui/react-slider';
 import { VideoFile } from '@/types';
 import { useAppStore } from '@/store';
@@ -12,93 +12,138 @@ interface VideoCardProps {
 export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
   const { removeVideo, updateVideo, tags } = useAppStore();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [videoUrl, setVideoUrl] = useState<string>('');
-  const [currentPreviewTime, setCurrentPreviewTime] = useState(video.startTime);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [videoSrc, setVideoSrc] = useState<string>('');
+  const [isVideoLoaded, setIsVideoLoaded] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<number>(16/9);
 
-  // Create and manage video URL
+  // Create video URL from file - stable approach
   useEffect(() => {
     if (video.file) {
       const url = URL.createObjectURL(video.file);
-      setVideoUrl(url);
+      setVideoSrc(url);
+      setIsVideoLoaded(false);
       
+      // Don't cleanup until component unmounts
       return () => {
         URL.revokeObjectURL(url);
       };
     }
-  }, [video.file]);
+  }, [video.file.name]); // Only recreate if file name changes
 
-  // Auto-start infinite live preview
+  // Handle video loading and auto-start
   useEffect(() => {
     const videoElement = videoRef.current;
-    if (!videoElement || !videoUrl) return;
+    if (!videoElement || !videoSrc) return;
 
-    const startPreview = () => {
+    const handleLoadedData = () => {
+      setIsVideoLoaded(true);
+      setCurrentTime(video.startTime);
+      
+      // Calculate actual aspect ratio
+      const ratio = videoElement.videoWidth / videoElement.videoHeight;
+      setAspectRatio(ratio);
+      
+      // Auto-start the video
       videoElement.currentTime = video.startTime;
       videoElement.play().catch(() => {
-        // Autoplay failed, retry in a moment
-        setTimeout(startPreview, 1000);
+        // Autoplay might be blocked, that's okay
       });
     };
 
-    // Start playing when video loads
-    videoElement.addEventListener('loadeddata', startPreview);
-    
-    // Loop between start and end time
-    const handleTimeUpdate = () => {
-      if (videoElement.currentTime >= video.endTime) {
-        videoElement.currentTime = video.startTime;
-      }
-      setCurrentPreviewTime(videoElement.currentTime);
+    const handleError = () => {
+      setIsVideoLoaded(false);
     };
+
+    videoElement.addEventListener('loadeddata', handleLoadedData);
+    videoElement.addEventListener('error', handleError);
+
+    return () => {
+      videoElement.removeEventListener('loadeddata', handleLoadedData);
+      videoElement.removeEventListener('error', handleError);
+    };
+  }, [videoSrc, video.startTime]);
+
+  // Handle automatic video looping with interval-based approach
+  useEffect(() => {
+    const videoElement = videoRef.current;
+    if (!videoElement || !isVideoLoaded) return;
+
+    const handleTimeUpdate = () => {
+      const time = videoElement.currentTime;
+      setCurrentTime(time);
+    };
+
+    // Robust interval-based looping
+    const loopInterval = setInterval(() => {
+      if (!videoElement) return;
+      
+      const time = videoElement.currentTime;
+      
+      // Ensure video is playing
+      if (videoElement.paused) {
+        videoElement.play().catch(() => {});
+      }
+      
+      // Loop back to start when reaching end time
+      if (time >= video.endTime || time < video.startTime) {
+        videoElement.currentTime = video.startTime;
+        videoElement.play().catch(() => {});
+      }
+    }, 100); // Check every 100ms
 
     videoElement.addEventListener('timeupdate', handleTimeUpdate);
 
     return () => {
-      videoElement.removeEventListener('loadeddata', startPreview);
       videoElement.removeEventListener('timeupdate', handleTimeUpdate);
+      clearInterval(loopInterval);
     };
-  }, [videoUrl, video.startTime, video.endTime]);
+  }, [video.startTime, video.endTime, isVideoLoaded]);
 
-  // Update preview when start/end times change
+  // Restart video when time range changes
   useEffect(() => {
     const videoElement = videoRef.current;
-    if (!videoElement) return;
-
-    // If current time is outside the new range, reset to start
-    if (videoElement.currentTime < video.startTime || videoElement.currentTime >= video.endTime) {
+    if (videoElement && isVideoLoaded) {
       videoElement.currentTime = video.startTime;
+      videoElement.play().catch(() => {
+        // Autoplay might be blocked
+      });
     }
-  }, [video.startTime, video.endTime]);
+  }, [video.startTime, video.endTime, isVideoLoaded]);
 
-  const handleStartTimeChange = (values: number[]) => {
+  const handleStartTimeChange = useCallback((values: number[]) => {
     const newStartTime = values[0];
     
-    // Ensure start time doesn't exceed end time
-    const maxStartTime = video.endTime - 0.5; // Minimum 0.5 second clip
-    const clampedStartTime = Math.min(newStartTime, maxStartTime);
-    
-    updateVideo(video.id, { startTime: clampedStartTime });
-    
-    // Update video position immediately
-    if (videoRef.current) {
-      videoRef.current.currentTime = clampedStartTime;
+    // Only allow if it doesn't cross the end time boundary
+    if (newStartTime < video.endTime - 0.1) {
+      const clampedStartTime = Math.max(0, newStartTime);
+      updateVideo(video.id, { startTime: clampedStartTime });
+      
+      // Update video position
+      const videoElement = videoRef.current;
+      if (videoElement) {
+        videoElement.currentTime = clampedStartTime;
+        setCurrentTime(clampedStartTime);
+      }
     }
-  };
+    // If it would cross the boundary, just ignore the change
+  }, [video.id, video.endTime, updateVideo]);
 
-  const handleEndTimeChange = (values: number[]) => {
+  const handleEndTimeChange = useCallback((values: number[]) => {
     const newEndTime = values[0];
     
-    // Ensure end time doesn't go below start time
-    const minEndTime = video.startTime + 0.5; // Minimum 0.5 second clip
-    const clampedEndTime = Math.max(newEndTime, minEndTime);
-    
-    updateVideo(video.id, { endTime: clampedEndTime });
-  };
+    // Only allow if it doesn't cross the start time boundary  
+    if (newEndTime > video.startTime + 0.1) {
+      const clampedEndTime = Math.min(video.duration, newEndTime);
+      updateVideo(video.id, { endTime: clampedEndTime });
+    }
+    // If it would cross the boundary, just ignore the change
+  }, [video.id, video.startTime, video.duration, updateVideo]);
 
-  const handleTagChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleTagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     const tagId = e.target.value || undefined;
     updateVideo(video.id, { tagId });
-  };
+  }, [video.id, updateVideo]);
 
   const selectedTag = tags.find(tag => tag.id === video.tagId);
   const clipDuration = video.endTime - video.startTime;
@@ -106,19 +151,23 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
   return (
     <div className="card p-4 animate-fade-in">
       {/* Video Preview */}
-      <div className="relative aspect-video bg-gray-800 rounded-lg overflow-hidden mb-4">
+      <div 
+        className="relative bg-gray-800 rounded-lg overflow-hidden mb-4 w-full"
+        style={{ 
+          aspectRatio: aspectRatio.toString(),
+          maxHeight: '300px' // Limit height for very tall videos
+        }}
+      >
         <video
           ref={videoRef}
-          src={videoUrl}
-          className="w-full h-full object-cover"
+          src={videoSrc}
+          className="w-full h-full object-contain"
           muted
-          loop={false} // We handle looping manually
           preload="metadata"
-          onError={(e) => {
-            console.warn('Video loading error:', e);
-          }}
+          playsInline
+          loop={false}
         />
-        
+
         {/* Upload status indicator */}
         <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-black/50">
           {video.uploadStatus === 'uploading' && (
@@ -157,10 +206,17 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
           </div>
         )}
 
-        {/* Live preview time indicator */}
+        {/* Current time indicator */}
         <div className="absolute bottom-2 right-2 px-2 py-1 rounded text-xs font-medium bg-black/70 text-white">
-          {formatTime(currentPreviewTime)}
+          {formatTime(currentTime)}
         </div>
+
+        {/* Loading indicator */}
+        {!isVideoLoaded && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <div className="text-white text-sm">Loading video...</div>
+          </div>
+        )}
       </div>
 
       {/* Video Info */}
@@ -188,9 +244,9 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
             <Slider.Root
               className="relative flex items-center select-none touch-none w-full h-5"
               value={[video.startTime]}
-              max={video.duration - 0.5}
+              max={video.duration}
               min={0}
-              step={0.1}
+              step={0.01}
               onValueChange={handleStartTimeChange}
             >
               <Slider.Track className="bg-gray-700 relative grow rounded-full h-2">
@@ -214,8 +270,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({ video }) => {
               className="relative flex items-center select-none touch-none w-full h-5"
               value={[video.endTime]}
               max={video.duration}
-              min={video.startTime + 0.5}
-              step={0.1}
+              min={0}
+              step={0.01}
               onValueChange={handleEndTimeChange}
             >
               <Slider.Track className="bg-gray-700 relative grow rounded-full h-2">
